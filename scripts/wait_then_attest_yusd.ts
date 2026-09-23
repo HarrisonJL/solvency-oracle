@@ -1,0 +1,55 @@
+// One-off: wait for an already-submitted tx hash to finalize, then submit
+// attest("YUSD") separately - avoids resubmitting/duplicating the XUSD
+// attest that's still in flight on-chain from a killed local script.
+import { createClient, createAccount } from "genlayer-js";
+import { testnetBradbury } from "genlayer-js/chains";
+import "dotenv/config";
+
+function safeJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v) => (typeof v === "bigint" ? v.toString() : v), 2);
+}
+
+async function main() {
+  const address = process.argv[2];
+  const pendingXusdHash = process.argv[3];
+  const rawKey = process.env.DEPLOYER_PRIVATE_KEY!;
+  const account = createAccount((rawKey.startsWith("0x") ? rawKey : `0x${rawKey}`) as `0x${string}`);
+  const client = createClient({ chain: testnetBradbury, account });
+
+  const beforeXusd: any = await client.readContract({ address: address as `0x${string}`, functionName: "get_state", args: [] });
+  console.log(`Waiting on already-submitted XUSD attest ${pendingXusdHash}...`);
+  const xusdReceipt: any = await client.waitForTransactionReceipt({
+    hash: pendingXusdHash as `0x${string}` & { length: 66 },
+    status: "FINALIZED" as any,
+    interval: 15000,
+    retries: 240,
+  });
+  console.log(`  -> ${xusdReceipt.txExecutionResultName} (result ${xusdReceipt.result}, resultName ${xusdReceipt.resultName})`);
+  const afterXusd: any = await client.readContract({ address: address as `0x${string}`, functionName: "get_state", args: [] });
+  console.log(`  attestation_count: ${beforeXusd.attestation_count} -> ${afterXusd.attestation_count}`);
+
+  const beforeYusd: any = await client.readContract({ address: address as `0x${string}`, functionName: "get_state", args: [] });
+  const txHash = await client.writeContract({ address: address as `0x${string}`, functionName: "attest", args: ["YUSD", 500], value: 0n });
+  console.log(`attest(YUSD) submitted ${txHash} - waiting...`);
+  const receipt: any = await client.waitForTransactionReceipt({
+    hash: txHash as `0x${string}` & { length: 66 },
+    status: "FINALIZED" as any,
+    interval: 15000,
+    retries: 240,
+  });
+  console.log(`  -> ${receipt.txExecutionResultName} (result ${receipt.result}, resultName ${receipt.resultName})`);
+  const afterYusd: any = await client.readContract({ address: address as `0x${string}`, functionName: "get_state", args: [] });
+  console.log(`  attestation_count: ${beforeYusd.attestation_count} -> ${afterYusd.attestation_count}`);
+
+  const state: any = await client.readContract({ address: address as `0x${string}`, functionName: "get_state", args: [] });
+  console.log("\nFinal get_state():", state);
+  for (let i = 0; i < Number(state.attestation_count); i++) {
+    const a = await client.readContract({ address: address as `0x${string}`, functionName: "get_attestation", args: [i] });
+    console.log(`get_attestation(${i}):`, safeJson(a));
+  }
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
