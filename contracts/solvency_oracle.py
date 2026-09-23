@@ -82,7 +82,14 @@ def _within_tolerance(leader_value: int, mine_value: int, tolerance_bps: int) ->
     return diff * 10000 <= tolerance_bps * leader_value
 
 
-def _readings_agree(leader_json: str, mine_json: str, tolerance_bps: int) -> bool:
+def _compute_verdict(reserves, liabilities, threshold_bps: int) -> str:
+    if reserves is None or liabilities is None or liabilities == 0:
+        return "INCONCLUSIVE"
+    coverage = reserves * 10000 // liabilities
+    return "SOLVENT" if coverage >= threshold_bps else "UNDERCOLLATERALISED"
+
+
+def _readings_agree(leader_json: str, mine_json: str, tolerance_bps: int, threshold_bps: int) -> bool:
     try:
         leader = json.loads(leader_json)
         mine = json.loads(mine_json)
@@ -99,6 +106,13 @@ def _readings_agree(leader_json: str, mine_json: str, tolerance_bps: int) -> boo
             continue
         if not _within_tolerance(lv, mv, tolerance_bps):
             return False
+    # Individually-tolerant inputs aren't enough: opposite-direction shifts
+    # can move the derived coverage ratio by ~2x the per-figure tolerance,
+    # enough to flip the verdict near a threshold. Require the verdict
+    # each party's own reading would produce to actually match.
+    if _compute_verdict(leader.get("reserves"), leader.get("liabilities"), threshold_bps) != \
+            _compute_verdict(mine.get("reserves"), mine.get("liabilities"), threshold_bps):
+        return False
     # source_hashes are deliberately NOT compared - pages can change
     # between fetches even when the figures they report don't. What has
     # to agree is the extracted numbers, not the page's byte content.
@@ -180,7 +194,7 @@ class SolvencyOracle(gl.Contract):
             if not isinstance(leaders_res, gl.vm.Return):
                 return False
             mine = _fetch_and_extract(source_urls)
-            return _readings_agree(leaders_res.calldata, mine, tolerance_bps)
+            return _readings_agree(leaders_res.calldata, mine, tolerance_bps, asset.threshold_bps)
 
         raw_json = gl.vm.run_nondet(leader_fn, validator_fn)
         reading = json.loads(raw_json)
@@ -193,18 +207,14 @@ class SolvencyOracle(gl.Contract):
         record.source_hashes_json = json.dumps(reading["source_hashes"])
         record.submitted_by = gl.message.sender_address
         record.attested_at = _now()
-
-        if reserves is None or liabilities is None or liabilities == 0:
-            record.reserves_bps = reserves if reserves is not None else 0
-            record.liabilities_bps = liabilities if liabilities is not None else 0
-            record.coverage_bps = 0
-            record.verdict = "INCONCLUSIVE"
-        else:
-            coverage = reserves * 10000 // liabilities
-            record.reserves_bps = reserves
-            record.liabilities_bps = liabilities
-            record.coverage_bps = coverage
-            record.verdict = "SOLVENT" if coverage >= asset.threshold_bps else "UNDERCOLLATERALISED"
+        record.reserves_bps = reserves if reserves is not None else 0
+        record.liabilities_bps = liabilities if liabilities is not None else 0
+        record.coverage_bps = (
+            reserves * 10000 // liabilities
+            if reserves is not None and liabilities is not None and liabilities != 0
+            else 0
+        )
+        record.verdict = _compute_verdict(reserves, liabilities, asset.threshold_bps)
 
     @gl.public.view
     def get_asset(self, asset_id: str) -> dict:

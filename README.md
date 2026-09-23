@@ -10,6 +10,8 @@ Proof-of-reserves today mostly means "trust the exchange's own attestation page"
 
 This is also, deliberately, a generalization of a mistake this account already made twice. The sibling [Ballpark](https://github.com/HarrisonJL/ballpark) project builds a general numeric consensus oracle and went through two real steward rejections getting the equivalence check right: first for allowing too wide a tolerance to mean anything, then for a significant-figure-rounding "fix" that silently didn't enforce the tolerance it claimed to. SolvencyOracle reuses that hard-won, now-correct design (`_within_tolerance`, verbatim in spirit) rather than re-deriving it - see that project's README for the full story of why a precise, uniform relative-tolerance check on raw values is the only version of this that actually works.
 
+Building this surfaced a *third*, related gap before anyone external had to find it: agreeing on reserves and liabilities individually, within tolerance, is not the same as agreeing on the coverage ratio they imply - see "Design notes" below.
+
 ## How it works
 
 `register_asset(asset_id, name, source_urls, threshold_bps, standard)` - permissionless, and once registered, immutable:
@@ -29,14 +31,16 @@ def validator_fn(leaders_res) -> bool:
     if not isinstance(leaders_res, gl.vm.Return):
         return False
     mine = _fetch_and_extract(source_urls)       # this validator's OWN independent fetch + extraction
-    return _readings_agree(leaders_res.calldata, mine, tolerance_bps)
+    return _readings_agree(leaders_res.calldata, mine, tolerance_bps, asset.threshold_bps)
 
 raw_json = gl.vm.run_nondet(leader_fn, validator_fn)
 ```
 
-Every validator (leader included) fetches every source URL live via `gl.nondet.web.render` and extracts `total_reserves`/`total_liabilities` via `gl.nondet.exec_prompt`. Agreement requires *both* figures to be within `tolerance_bps` of the leader's (precise relative-tolerance check, capped at `MAX_TOLERANCE_BPS = 2000`, 20% - same cap and reasoning as Ballpark). The stored attestation is the leader's raw reading; `coverage_bps = reserves * 10000 // liabilities` is computed deterministically afterward, and the verdict follows mechanically: `SOLVENT` if coverage meets the asset's threshold, `UNDERCOLLATERALISED` if not, `INCONCLUSIVE` if either figure - or liabilities being exactly zero - couldn't be extracted. Every stored source page is also SHA-256 hashed for audit, though the hash is never part of the agreement check (see "Design notes").
+Every validator (leader included) fetches every source URL live via `gl.nondet.web.render` and extracts `total_reserves`/`total_liabilities` via `gl.nondet.exec_prompt`. Agreement requires *both* figures to be within `tolerance_bps` of the leader's (precise relative-tolerance check, capped at `MAX_TOLERANCE_BPS = 2000`, 20% - same cap and reasoning as Ballpark) *and* requires the verdict each party's own reading would independently produce to match (see "Design notes" for why the first condition alone isn't enough). The stored attestation is the leader's raw reading; `coverage_bps = reserves * 10000 // liabilities` is computed deterministically afterward via the same `_compute_verdict` helper used in the consensus check, so there's one source of truth for what counts as `SOLVENT` and what doesn't. Every stored source page is also SHA-256 hashed for audit, though the hash is never part of the agreement check.
 
 ## Design notes
+
+**Individually-tolerant readings can still disagree on the verdict.** The first version of `_readings_agree` only checked that reserves and liabilities were each within `tolerance_bps` of the leader's - independently. That's not sufficient: if reserves shifts +5% and liabilities shifts -5% (each individually within a 5% tolerance), the *derived coverage ratio* can shift by close to double that, ~10.5%. Near a threshold boundary, that's enough for the leader to compute `SOLVENT` while a fully tolerance-compliant validator's own reading computes `UNDERCOLLATERALISED` - a real disagreement on the thing the contract exists to attest, invisible to a check that only looks at the raw inputs. The fix: `_readings_agree` also requires `_compute_verdict(leader's reading)` to equal `_compute_verdict(validator's own reading)`, both using the same threshold. `tests/test_solvency_oracle.py::test_validator_disagrees_when_individually_tolerant_shifts_flip_the_verdict` reproduces the exact scenario (both figures individually at the tolerance boundary, opposite directions, verdict flips) and confirms it's now rejected; the paired test with same-direction shifts confirms genuinely-consistent readings still agree.
 
 **Prompt injection.** The fetched page text is explicitly fenced as untrusted content inside the extraction prompt, with an instruction not to treat anything inside it as instructions - the same defensive pattern Wizard's Coin uses for its adversarial user input, applied here to adversarial *web content* instead.
 
@@ -55,11 +59,11 @@ Bradbury runs GenVM **v0.2.11**. Two things confirmed directly against the versi
 
 ## Testing
 
-`tests/test_solvency_oracle.py` (25 tests, `genlayer-test` Direct Mode) covers three layers:
+`tests/test_solvency_oracle.py` (27 tests, `genlayer-test` Direct Mode) covers three layers:
 
 1. **Registration** - input validation, immutability, multi-registrant behavior.
 2. **Integration** (real `attest()` calls, both the web fetch *and* the LLM extraction mocked via `direct_vm.mock_web`/`mock_llm`) - all three verdicts, source-hash recording, multi-source fetching, state bookkeeping.
-3. **Consensus-boundary tests** via `direct_vm.run_validator(leader_result=...)` - the same cheatcode proven in the sibling Ballpark project, needed because Direct Mode only *captures* `validator_fn` rather than simulating a real vote. Exact boundary cases (agrees at precisely `tolerance_bps`, disagrees one unit past it), a test that both reserves *and* liabilities must independently agree, and an explicit test that source-hash differences never affect agreement.
+3. **Consensus-boundary tests** via `direct_vm.run_validator(leader_result=...)` - the same cheatcode proven in the sibling Ballpark project, needed because Direct Mode only *captures* `validator_fn` rather than simulating a real vote. Exact boundary cases (agrees at precisely `tolerance_bps`, disagrees one unit past it), a test that both reserves *and* liabilities must independently agree, an explicit test that source-hash differences never affect agreement, and the two tests described in "Design notes" proving the verdict-consistency fix.
 
 ```bash
 python3.14 -m venv .venv && source .venv/bin/activate
@@ -87,3 +91,4 @@ npx tsx scripts/attest_demo.ts <contract_address>
 - **`standard` is descriptive, not enforced** - the contract has no way to verify that a registered asset's actual backing composition matches the claimed standard, only that the reserve/liability *numbers* a page reports meet the stated threshold.
 - **No spam/cost control beyond the URL-count and tolerance caps** - a production deployment serving untrusted callers would likely want a small fee on `attest()`, mirroring Wizard's Coin's fee mechanism, deliberately left out here to keep the primitive minimal.
 - **Immutable registration means a stale or dead source URL has no update path** in this version - see "Design notes."
+- **`asset_id` registration is permissionless and first-come-first-served, with no namespace protection.** Anyone can register `"USDC"` pointing at arbitrary source URLs before the real issuer does, and it's permanent (see "Immutable registration, by design" above). This is inherent to any permissionless public registry, not unique to this contract, but worth stating plainly: `asset_id` is a label a caller chose, not a verified claim of identity.

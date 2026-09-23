@@ -338,3 +338,45 @@ def test_validator_ignores_source_hash_differences(direct_vm, direct_deploy, dir
     _mock_llm(direct_vm, reserves=100000, liabilities=100000)
     leader_result = json.dumps({"reserves": 100000, "liabilities": 100000, "source_hashes": ["deadbeef"]})
     assert direct_vm.run_validator(leader_result=leader_result) is True
+
+
+def test_validator_disagrees_when_individually_tolerant_shifts_flip_the_verdict(direct_vm, direct_deploy, direct_owner):
+    # The bug this guards against: reserves and liabilities can EACH be
+    # individually within tolerance_bps of the leader's, while shifting in
+    # OPPOSITE directions moves the derived coverage ratio by close to
+    # DOUBLE that tolerance - enough to cross a threshold. Leader coverage
+    # here is exactly 1.05x (SOLVENT against a 1.05x threshold); the
+    # validator's reserves (-5%, at the tolerance boundary) and
+    # liabilities (+5%, also at the boundary) each individually agree,
+    # but its own coverage is 0.95x - UNDERCOLLATERALISED. A check that
+    # only compared raw reserves/liabilities would have missed this.
+    so = _deploy(direct_vm, direct_deploy, direct_owner)
+    _register(so, threshold_bps=10500)
+    _mock_page(direct_vm, URL, "page")
+    _mock_llm(direct_vm, reserves=10500, liabilities=10000)  # coverage 1.05x -> SOLVENT
+    so.attest("USDX", 500)
+
+    direct_vm.clear_mocks()
+    _mock_page(direct_vm, URL, "page")
+    # reserves -525 (exactly 5% of 10500), liabilities +500 (exactly 5% of
+    # 10000) - both individually at the tolerance boundary, "agreeing".
+    _mock_llm(direct_vm, reserves=9975, liabilities=10500)  # own coverage 0.95x -> UNDERCOLLATERALISED
+    leader_result = json.dumps({"reserves": 10500, "liabilities": 10000, "source_hashes": []})
+    assert direct_vm.run_validator(leader_result=leader_result) is False
+
+
+def test_validator_agrees_when_same_direction_shifts_preserve_the_verdict(direct_vm, direct_deploy, direct_owner):
+    # Contrast with the test above: shifts in the SAME direction (both
+    # reserves and liabilities down ~2%) move the ratio much less and
+    # don't cross the threshold - still correctly agrees.
+    so = _deploy(direct_vm, direct_deploy, direct_owner)
+    _register(so, threshold_bps=10500)
+    _mock_page(direct_vm, URL, "page")
+    _mock_llm(direct_vm, reserves=10500, liabilities=10000)
+    so.attest("USDX", 500)
+
+    direct_vm.clear_mocks()
+    _mock_page(direct_vm, URL, "page")
+    _mock_llm(direct_vm, reserves=10290, liabilities=9800)  # both ~2% down - coverage still ~1.05x
+    leader_result = json.dumps({"reserves": 10500, "liabilities": 10000, "source_hashes": []})
+    assert direct_vm.run_validator(leader_result=leader_result) is True
