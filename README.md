@@ -2,7 +2,7 @@
 
 A reusable proof-of-reserves attestation primitive for [GenLayer](https://genlayer.com): register an asset with its public reserve/attestation pages and a required coverage ratio, and any caller can trigger a real validator committee to fetch those pages live, extract the reserves and liabilities, and reach consensus on a `SOLVENT` / `UNDERCOLLATERALISED` verdict - with an exact, mathematically-guaranteed tolerance on the numbers, not a rounded guess.
 
-**Live on GenLayer's Bradbury testnet. Testnet only.**
+**Live on GenLayer Studio Next. Testnet only.** (Also live, separately, on Bradbury - see [`CONTRACT.md`](CONTRACT.md).)
 
 ## The problem this solves
 
@@ -51,6 +51,15 @@ Every validator (leader included) fetches every source URL live via `gl.nondet.w
 **All-or-nothing across reserves and liabilities**, same reasoning as Ballpark's metric vector: if either figure disagrees beyond tolerance, the whole attestation fails to reach consensus (`UNDETERMINED` at the protocol level) rather than storing a partial result.
 
 ## Verified platform facts
+
+This contract exists in two source files: [`contracts/solvency_oracle.py`](contracts/solvency_oracle.py)
+(Bradbury, GenVM v0.2.11, test-covered by the suite below) and
+[`contracts/solvency_oracle_studio_next.py`](contracts/solvency_oracle_studio_next.py)
+(Studio Next, a newer GenVM generation - the primary live deployment). They're
+functionally identical; only import/decorator conventions differ between runtime
+generations. See [`studio-next/README.md`](studio-next/README.md) for the exact diff,
+why the port was mechanical rather than a logic change, and why the Studio Next variant
+is verified live rather than via Direct Mode (it runs ahead of any public GenVM release).
 
 Bradbury runs GenVM **v0.2.11**. Two things confirmed directly against the version-matched SDK source before writing this contract, not assumed from the sibling projects' notes:
 

@@ -1,0 +1,18 @@
+{
+  "name": "solvency-oracle-studio-next",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Deployment/attestation tooling for SolvencyOracle on GenLayer Studio Next (chain 61997). Pinned to genlayer-js v2 (unreleased) because Studio Next needs its explicit-fees API and studioDevnet chain preset, unlike the stable v1 SDK used for Bradbury in the parent directory.",
+  "type": "commonjs",
+  "scripts": {
+    "deploy": "tsx deploy.ts",
+    "register-and-attest": "tsx register_and_attest.ts",
+    "check-schema": "tsx check_schema.ts"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.3",
+    "genlayer-js": "^2.0.0-rc.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

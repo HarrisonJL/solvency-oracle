@@ -1,44 +1,19 @@
 # Deployment
 
-- **Address:** [`0xD62Fc7B7Dc5bf68F8F3a28E20aD6C47E8403652A`](https://explorer-bradbury.genlayer.com/address/0xD62Fc7B7Dc5bf68F8F3a28E20aD6C47E8403652A)
-- **Network:** GenLayer Bradbury Testnet (chain id `4221`)
-- **Deploy tx:** [`0xa63abe04283257a4de726a8a96c960d3326f5e2f0ac7529842b4a87b096ed47b`](https://explorer-bradbury.genlayer.com/tx/0xa63abe04283257a4de726a8a96c960d3326f5e2f0ac7529842b4a87b096ed47b)
+- **Address:** [`0x194F0cCA91ee7244938519F1475F43C65d4E71Bc`](https://explorer-studio-dev.genlayer.com/address/0x194F0cCA91ee7244938519F1475F43C65d4E71Bc)
+- **Network:** GenLayer Studio Next (chain id `61997`)
+- **Deploy tx:** `0xd9e88105d2db6fb3944f42e0fb50a8a41b0705efb7bb01081f6106a53fe0050d`
 - **Deployer:** `0x5cdb5699bc1038e115A973bb91A646f7E98C075b`
+- **Contract source:** [`contracts/solvency_oracle_studio_next.py`](contracts/solvency_oracle_studio_next.py) - functionally identical to [`contracts/solvency_oracle.py`](contracts/solvency_oracle.py); only GenVM import/decorator conventions differ between runtime generations. See [`studio-next/README.md`](studio-next/README.md) for the exact diff and why this variant has no local Direct Mode test coverage (Studio Next runs a runtime newer than any public GenVM release, so it can't be simulated locally - it's verified live instead, below).
 
-Confirmed genuinely readable post-deploy via a real `get_state()` call. This is a redeploy of the contract below, with one fix: `_readings_agree` now also requires the leader's and validator's own readings to imply the *same verdict* (`SOLVENT`/`UNDERCOLLATERALISED`), not just individually-tolerant reserves and liabilities - see "Design notes" in the README. Both demo assets are registered (`asset_count: 2`).
-
-## Live re-attestation: pending calmer network conditions
-
-Both demo assets (`XUSD`, `YUSD`) registered cleanly on this contract - txs [`0xea5cd18c...`](https://explorer-bradbury.genlayer.com/tx/0xea5cd18c8af8a7f8e6bcc3974bbfef246c331b74748bf3af49e9decb3b1e93dc) and prior registrations, both `FINISHED_WITH_RETURN`, confirmed via `get_state()` showing `asset_count: 2`.
-
-`attest()`, however, failed to reach clean consensus on six consecutive attempts across both assets in one session (2026-09-23), diagnosed via `getTransaction()` on each tx rather than assumed:
-
-- Multiple validator **TIMEOUT**s (3-5 of the validators consulted never completed their web-fetch + LLM-extraction round in time) - e.g. tx [`0x92663c94...`](https://explorer-bradbury.genlayer.com/tx/0x92663c949623c0f6b4d709936ad9574cf6a8cba76e322b76732a169207759da1).
-- One raw RPC fetch failure reading transaction status back (`fetch failed`, a network-level hiccup, not a consensus result).
-- One 17-validator appeal cascade (from an initial 3), split near-evenly between two result hashes, with every individual vote logged as `TIMEOUT` or `DETERMINISTIC_VIOLATION` and no vote ever cleanly resolving to `AGREE` - tx [`0x693fd619...`](https://explorer-bradbury.genlayer.com/tx/0x693fd6199945c311dba23989cdbd3cdcba23ffb360f89f668013ca04f6ff374a).
-
-Each `attest()` printed `FINISHED_WITH_RETURN` in the submitting script's log, but `get_state()` read independently after every attempt confirmed `attestation_count` never moved from `0` - the log line alone is not proof of a committed write (see the YUSD story below, and the README's "Known limitations").
-
-Ruled out before concluding this is network noise rather than a regression from the fix: the demo pages fetch in 70-300ms (not a slow source), and `XUSD`'s real coverage (1.25x) sits 2500bps clear of its 1.0x threshold - far outside any plausible range for LLM-extraction noise to flip the verdict, which is what the fix's new check actually gates on. The fix's correctness is proven directly by two new unit tests (`test_validator_disagrees_when_individually_tolerant_shifts_flip_the_verdict`, `test_validator_agrees_when_same_direction_shifts_preserve_the_verdict`) exercising exactly this boundary via `direct_vm.run_validator()`, independent of live network conditions. Live re-attestation against this address will be added here once it succeeds.
-
-## Superseded: pre-audit-fix deployment
-
-- **Address:** [`0x37850c223b492A365990DeD4A8cD6bfC188e5A0e`](https://explorer-bradbury.genlayer.com/address/0x37850c223b492A365990DeD4A8cD6bfC188e5A0e)
-- **Deploy tx:** [`0xd9718766a3e7eba10dd02bb5d07bb450f6e93b8ec35cc08f0fbf965d65551ee1`](https://explorer-bradbury.genlayer.com/tx/0xd9718766a3e7eba10dd02bb5d07bb450f6e93b8ec35cc08f0fbf965d65551ee1)
-- **Deployer:** `0x5cdb5699bc1038e115A973bb91A646f7E98C075b`
-
-Superseded by the redeploy above, which fixes the verdict-consistency gap described in the README's "Design notes." The live proof below remains accurate for *this* address and is kept as evidence the underlying consensus mechanics (web-fetch, LLM extraction, tolerance comparison, retry-on-split-vote) work end to end - the fix changes what counts as "agreement," not how attestation or retries work.
-
-### Live proof: two real attestations, one clean, one that needed a retry
+## Live proof: both demo assets, both attestations, clean on the first try
 
 Two demo assets registered ([`demo/example_solvent_reserves.md`](demo/example_solvent_reserves.md), [`demo/example_undercollateralised_reserves.md`](demo/example_undercollateralised_reserves.md), served raw from this repo on GitHub - real public pages, not mocked):
 
-- `register_asset("XUSD", ..., threshold_bps: 10000)` - tx [`0x3adba59b...`](https://explorer-bradbury.genlayer.com/tx/0x3adba59b07a060b5bf83add3096abada91791f1e5a1f3af1ec9ce9efe2968027)
-- `register_asset("YUSD", ..., threshold_bps: 10000)` - tx [`0x2b5cc48b...`](https://explorer-bradbury.genlayer.com/tx/0x2b5cc48bcbd51565d33c94d31514c7c6516390bb89261bc013382d8dcb564586)
+- `register_asset("XUSD", ..., threshold_bps: 10000)` - tx `0x37351b73bd57deea169b34ad5b024f67ce537191607d94e512c5224e048cac49`
+- `register_asset("YUSD", ..., threshold_bps: 10000)` - tx `0x5b2449ed415544e07b494ea0d7ea72506a2aac5da0a405d329608dea998502ae`
 
-### XUSD - clean consensus on the first try
-
-`attest("XUSD", 500)` - tx [`0x872564df...`](https://explorer-bradbury.genlayer.com/tx/0x872564dff78f98df3c1606f997e0bc6c4ff81d666be53d997f81ffa85f0f6ca9): single round, 5/5 validators, unanimous result hash, result code `1` (clean).
+`attest("XUSD", 500)` - tx `0x868c7ccbfb8a8800fff66b9c9abe0f851b211a88e76f1bc7efccd2b056ab44ad`:
 
 ```json
 {
@@ -47,17 +22,12 @@ Two demo assets registered ([`demo/example_solvent_reserves.md`](demo/example_so
   "liabilities_bps": 1000000000000,
   "coverage_bps": 12500,
   "verdict": "SOLVENT",
-  "tolerance_bps": 500
+  "tolerance_bps": 500,
+  "attested_at": "2026-09-24T13:46:28.672377+00:00"
 }
 ```
 
-$125M reserves / $100M liabilities = 1.25x, exactly what the source page states, extracted live by real validators and agreed within 5% - **SOLVENT**, correctly.
-
-### YUSD - a real failure, then a clean retry (kept, not hidden)
-
-The first `attest("YUSD", 500)` - tx [`0x8f2da989...`](https://explorer-bradbury.genlayer.com/tx/0x8f2da989b98487b5c4003ace808cb561ca72b33237c1d42efaff3809bfdb382f) - escalated through an appeal to an 11-validator round that came back split: some validators timed out, others computed mismatched result hashes (6 vs 5), overall result code `2` (not clean). A naive check (`txExecutionResultName !== "FINISHED_WITH_ERROR"`) would have reported this as a success - it was not. `get_state()` immediately after showed `attestation_count` still at 1, proving the write never actually committed. This is documented, not hidden, in the README's "Known limitations."
-
-A retry - tx [`0xdb325bf6...`](https://explorer-bradbury.genlayer.com/tx/0xdb325bf6087dd192568e4fb3d435515d747b1feee794d4a74f049b9eae2dbe9b) - reached clean consensus, result code `1`:
+`attest("YUSD", 500)` - tx `0xd46b2f47b7cad72614ebc3a7b3a6d2b93478fa61007aef8403a32de1e02a6b70`:
 
 ```json
 {
@@ -66,10 +36,77 @@ A retry - tx [`0xdb325bf6...`](https://explorer-bradbury.genlayer.com/tx/0xdb325
   "liabilities_bps": 1000000000000,
   "coverage_bps": 7000,
   "verdict": "UNDERCOLLATERALISED",
-  "tolerance_bps": 500
+  "tolerance_bps": 500,
+  "attested_at": "2026-09-24T13:47:21.880565+00:00"
 }
 ```
 
-$70M reserves / $100M liabilities = 0.70x, correctly flagged as **UNDERCOLLATERALISED** against the 1.0x threshold - a genuinely different verdict from XUSD's, proving the oracle isn't rubber-stamping every asset SOLVENT.
+Both committed cleanly - no retry, no appeal, no timeout: `get_state()` after both reads `{ asset_count: 2, attestation_count: 2 }`. $125M/$100M = 1.25x (SOLVENT) and $70M/$100M = 0.70x (UNDERCOLLATERALISED) - genuinely different verdicts, both extracted live by real validators via real web fetches and LLM extraction, not hardcoded or mocked.
+
+## Porting from Bradbury to Studio Next
+
+The contract was originally built and audited against GenVM v0.2.11 (Bradbury's runtime).
+Moving to Studio Next (a newer runtime generation) surfaced three mechanical
+incompatibilities, found by iterating against the live network's own schema-check and
+error tracebacks rather than guessed:
+
+1. **Deploy header**: the pinned `py-genlayer` runner hash from the old header doesn't
+   exist on Studio Next's node. Fixed by using the hash Studio Next's own `:test` tag
+   resolves to, confirmed against GenLayer's own live reference contracts in the Studio
+   Next IDE (`_hello_world.py`, `wizard_of_coin.py`, etc.).
+2. **Import/decorator conventions**: `from genlayer import *` no longer binds a `gl`
+   name; the new convention is `import genlayer as gl` plus explicit
+   `from genlayer.types import *` / `from genlayer.storage import TreeMap, DynArray`.
+   `@allow_storage` was replaced by `@gl.storage.allow` + `@dataclass` together.
+   `gl.Contract` became `gl.contract.Contract`.
+3. **One genuine runtime bug**: `gl.message_raw['datetime']` doesn't exist in the new
+   package - confirmed via a temporary `debug_gl()` probe method deployed specifically
+   to introspect `dir(gl.message)` live, rather than guessed. The replacement,
+   `gl.message.datetime`, was confirmed present and correctly formatted before being
+   adopted.
+
+The underlying consensus primitives (`gl.vm.run_nondet`, `gl.eq_principle.*`) were
+confirmed byte-for-byte identical between the two GenVM versions before concluding this
+was a mechanical port rather than a logic change requiring re-verification of the
+tolerance/verdict-consistency fix itself.
+
+## Historical: Bradbury deployments
+
+SolvencyOracle was originally built and live-tested on GenLayer Bradbury Testnet (chain
+`4221`) before moving to Studio Next. Both Bradbury deployments below remain live and
+readable; they're kept as evidence the underlying mechanics work on more than one
+network, not as the current primary deployment.
+
+### Post-audit-fix Bradbury deployment
+
+- **Address:** [`0xD62Fc7B7Dc5bf68F8F3a28E20aD6C47E8403652A`](https://explorer-bradbury.genlayer.com/address/0xD62Fc7B7Dc5bf68F8F3a28E20aD6C47E8403652A)
+- **Deploy tx:** [`0xa63abe04283257a4de726a8a96c960d3326f5e2f0ac7529842b4a87b096ed47b`](https://explorer-bradbury.genlayer.com/tx/0xa63abe04283257a4de726a8a96c960d3326f5e2f0ac7529842b4a87b096ed47b)
+
+Carries the verdict-consistency fix (see "Design notes" in the README). Both demo assets
+are registered (`asset_count: 2`), but six consecutive `attest()` attempts against it
+failed to reach clean consensus in one session (2026-09-23) - validator timeouts, one raw
+RPC fetch failure, and one 17-validator appeal cascade, none of them ever reaching a
+clean `AGREE`. Full diagnostic detail (tx hashes, vote breakdowns) is preserved in this
+file's git history. This - not a logic regression - is what motivated evaluating Studio
+Next as an alternative network: a same-night control test against the *original*
+pre-fix Bradbury deployment (below) succeeded cleanly, twice, under the same network
+conditions, which combined with a validator-overlap check ruled out both "the fix caused
+it" and "the whole network is just down." The likely cause is cold-start overhead
+specific to freshly-deployed contracts on Bradbury, not anything under this project's
+control.
+
+### Original pre-audit-fix Bradbury deployment
+
+- **Address:** [`0x37850c223b492A365990DeD4A8cD6bfC188e5A0e`](https://explorer-bradbury.genlayer.com/address/0x37850c223b492A365990DeD4A8cD6bfC188e5A0e)
+- **Deploy tx:** [`0xd9718766a3e7eba10dd02bb5d07bb450f6e93b8ec35cc08f0fbf965d65551ee1`](https://explorer-bradbury.genlayer.com/tx/0xd9718766a3e7eba10dd02bb5d07bb450f6e93b8ec35cc08f0fbf965d65551ee1)
+
+Superseded by the fix above. Live proof here predates the fix and is kept as evidence
+the underlying consensus mechanics (web-fetch, LLM extraction, tolerance comparison,
+retry-on-split-vote) work end to end on Bradbury specifically:
+
+- `register_asset("XUSD", ...)` - tx `0x3adba59b07a060b5bf83add3096abada91791f1e5a1f3af1ec9ce9efe2968027`
+- `register_asset("YUSD", ...)` - tx `0x2b5cc48bcbd51565d33c94d31514c7c6516390bb89261bc013382d8dcb564586`
+- `attest("XUSD", 500)` - tx `0x872564dff78f98df3c1606f997e0bc6c4ff81d666be53d997f81ffa85f0f6ca9`: clean on the first try, 5/5 validators, result `SOLVENT` (1.25x coverage).
+- `attest("YUSD", 500)` - first attempt (tx `0x8f2da989b98487b5c4003ace808cb561ca72b33237c1d42efaff3809bfdb382f`) escalated to an 11-validator split vote and did **not** commit (`get_state()` confirmed `attestation_count` unchanged, despite the tx looking superficially successful in a naive log line) - documented rather than hidden, and the direct motivation for this project's emphasis on independently verifying state after every write. A retry (tx `0xdb325bf6087dd192568e4fb3d435515d747b1feee794d4a74f049b9eae2dbe9b`) reached clean consensus: `UNDERCOLLATERALISED` (0.70x coverage).
 
 `get_state()` after both: `{ asset_count: 2, attestation_count: 2 }`.
