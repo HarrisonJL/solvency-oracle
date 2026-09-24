@@ -46,6 +46,24 @@ by real validators). If `gltest` ever ships a version pin matching Studio Next's
 runtime, this file should be brought under the main test suite the same way the
 Bradbury version is.
 
+## genlayer-js v2 client gotchas (confirmed live, not from docs)
+
+- **Explicit fees are required.** `deployContract`/`writeContract` fail with
+  `FeesDistributionMissing` unless you pass `fees: { distribution, feeValue }` from
+  `client.estimateTransactionFees({})` first (or `estimateTransactionFeesForWrite`,
+  though that one 500'd server-side against this network - the generic estimator
+  worked fine for both deploy and write).
+- **`getTransaction()` and `waitForTransactionReceipt()` return inconsistently-cased
+  field names for the same data.** `getTransaction()` returns `statusName` (camelCase);
+  `waitForTransactionReceipt()` returns `status_name` (snake_case) for the identical
+  field. Both agree on `last_round`/`last_leader`/`round_validators`/
+  `validator_votes_name` (all snake_case) and `txExecutionResultName` (camelCase in
+  both). Worth double-checking with a real call rather than assuming one method's
+  casing carries over to the other - this cost real debugging time once already (see
+  `pegwatch/src/lib/pollTransaction.ts`).
+- **`waitForTransactionReceipt`'s old `status: "FINALIZED"` param is deprecated** in
+  favor of `waitUntil: "decided" | "finalized"`.
+
 ## Scripts
 
 - `npm run check-schema` - validates the contract against Studio Next's live runner
