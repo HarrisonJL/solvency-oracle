@@ -43,13 +43,17 @@ Two demo assets registered ([`demo/example_solvent_reserves.md`](demo/example_so
 
 Both committed cleanly - no retry, no appeal, no timeout: `get_state()` after both reads `{ asset_count: 2, attestation_count: 2 }`. $125M/$100M = 1.25x (SOLVENT) and $70M/$100M = 0.70x (UNDERCOLLATERALISED) - genuinely different verdicts, both extracted live by real validators via real web fetches and LLM extraction, not hardcoded or mocked.
 
-## Live proof: multi-source cross-checking (a capability that existed but was never demoed)
+## Live proof: multi-source evidence (a capability that existed but was never demoed)
 
-The contract has always supported up to `MAX_SOURCE_URLS = 3` independent source URLs
-per asset, cross-hashed - neither XUSD nor YUSD used more than one. A third demo asset,
-MUSD, registers two independently-styled pages ([issuer treasury report](demo/example_multisource_treasury.md),
+The contract has always supported up to `MAX_SOURCE_URLS = 3` source URLs per asset -
+neither XUSD nor YUSD used more than one. A third demo asset, MUSD, registers two
+independently-styled pages ([issuer treasury report](demo/example_multisource_treasury.md),
 [separate auditor confirmation](demo/example_multisource_audit.md)) reporting the same
-figures, so `attest()` actually has to fetch and agree across both:
+figures, so `attest()` actually has to fetch both and extract from the combined evidence -
+**not** extract from each separately and compare them; see the README's "Multiple sources
+are combined, not cross-checked against each other" for exactly what this does and doesn't
+prove (a steward review of the sibling PegWatch dashboard flagged this exact distinction
+after its UI overstated it):
 
 - `register_asset("MUSD", ..., [treasury_url, audit_url], threshold_bps: 10000)` - tx `0x00fc94e00134416b4631e30633d167c48c6abc2d5ea4d2c1345026bf66161241`
 - `attest("MUSD", 500)` - tx `0xde25e9e9e4b0b5d1c99884c65a6fccdaa1707d3788df0169c979ca0b272d48a9`:
@@ -68,7 +72,18 @@ figures, so `attest()` actually has to fetch and agree across both:
 ```
 
 Two distinct source hashes recorded, one per page - concrete on-chain evidence both
-sources were actually fetched and cross-checked, not just the first one.
+pages were actually fetched and folded into the one combined extraction, not just the
+first one. The hashes themselves are never compared to each other or used to detect
+disagreement between the two pages - see the README for why.
+
+One honest note on this specific demo asset: MUSD's registered `standard` field reads
+"1:1 USD reserve, cross-checked across two independent sources (demo)" - written before
+this correction, and it repeats the same overstatement this section now explicitly
+disclaims. `standard` is immutable once registered (see "Immutable registration, by
+design" in the README) and is documented as descriptive text the contract never verifies,
+not a claim it checks - so this isn't fixable in place, but it's worth flagging plainly
+rather than leaving a reader to wonder why the asset's own stored description doesn't
+match the correction above it.
 
 ## Porting from Bradbury to Studio Next
 

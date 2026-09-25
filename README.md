@@ -48,6 +48,8 @@ Every validator (leader included) fetches every source URL live via `gl.nondet.w
 
 **Immutable registration, by design.** An asset's source URLs and threshold never change after registration. This is deliberately less flexible than allowing updates (a v2 would need an owner-gated update path, or a versioned re-registration), but it means a historical attestation's context can never be quietly altered out from under it.
 
+**Multiple sources are combined, not cross-checked against each other.** When an asset registers more than one `source_url`, `_fetch_and_extract` concatenates every page into one evidence block and runs a *single* extraction against all of it - it does not fetch and extract each source separately, and it never compares one source's implied figures against another's. What multiple sources actually buy is a broader evidence base for that one extraction (an LLM reading two pages that both state a figure is less likely to be tripped up by one page's ambiguous wording than reading either alone) and, since every page is hashed, on-chain proof that all of them were genuinely fetched - not that they agreed with each other. The real cross-checking this contract does is validator-to-validator: multiple independent validators each re-run the same combined fetch-and-extract and must land on the same reading (see `_readings_agree` above). A steward review of this account's sibling PegWatch dashboard flagged exactly this distinction after its UI described multi-source assets as "independent sources cross-checked," which overstated what the contract verifies - the dashboard copy has been corrected to match this description. Genuinely detecting *disagreement between sources* (e.g. one page claims reserves are healthy while another claims they're gone) would need a different design - a separate extraction and a real agreement check per source - which this version doesn't attempt.
+
 **All-or-nothing across reserves and liabilities**, same reasoning as Ballpark's metric vector: if either figure disagrees beyond tolerance, the whole attestation fails to reach consensus (`UNDETERMINED` at the protocol level) rather than storing a partial result.
 
 ## Verified platform facts
@@ -83,7 +85,7 @@ pytest tests/ -v
 
 ## Deployment
 
-See [`CONTRACT.md`](CONTRACT.md) for the live address, deploy tx, and real attestations of three demo assets - one solvent, one deliberately undercollateralised, and one backed by two independent, cross-checked sources rather than one.
+See [`CONTRACT.md`](CONTRACT.md) for the live address, deploy tx, and real attestations of three demo assets - one solvent, one deliberately undercollateralised, and one backed by two source pages combined into a single reading rather than one (see "Multiple sources are combined, not cross-checked against each other" below for exactly what that does and doesn't prove).
 
 ```bash
 npm install
@@ -101,3 +103,4 @@ npx tsx scripts/attest_demo.ts <contract_address>
 - **No spam/cost control beyond the URL-count and tolerance caps** - a production deployment serving untrusted callers would likely want a small fee on `attest()`, mirroring Wizard's Coin's fee mechanism, deliberately left out here to keep the primitive minimal.
 - **Immutable registration means a stale or dead source URL has no update path** in this version - see "Design notes."
 - **`asset_id` registration is permissionless and first-come-first-served, with no namespace protection.** Anyone can register `"USDC"` pointing at arbitrary source URLs before the real issuer does, and it's permanent (see "Immutable registration, by design" above). This is inherent to any permissionless public registry, not unique to this contract, but worth stating plainly: `asset_id` is a label a caller chose, not a verified claim of identity.
+- **Multiple sources are combined into one reading, not independently cross-checked against each other** - see "Design notes." A page that misreports a figure isn't caught by comparison against another source; only the extraction from the combined evidence has to survive validator-to-validator consensus.
